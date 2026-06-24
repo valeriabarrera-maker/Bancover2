@@ -1,21 +1,10 @@
 // Estado compartido de los checkboxes (requerimientos "revisados") entre dispositivos.
-// Guarda un único documento JSON en Upstash Redis (Vercel KV) bajo una sola clave global.
-// GET  /api/progress   -> devuelve el estado guardado { mi: [ri, ...], ... }
-// POST /api/progress   -> guarda el estado enviado en el body (JSON)
+// Guarda un único documento JSON en Vercel Blob (gratis, incluido en la cuenta de Vercel).
+// GET  /api/progress  -> devuelve el estado guardado { mi: [ri, ...], ... }
+// POST /api/progress  -> guarda el estado enviado en el body (JSON)
+import { put, list } from "@vercel/blob";
 
-const URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-const KEY = "sgdea-progreso-v1";
-
-async function redis(cmd) {
-  const r = await fetch(URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(cmd),
-  });
-  if (!r.ok) throw new Error("redis " + r.status);
-  return r.json();
-}
+const KEY = "sgdea-progreso.json";
 
 async function readBody(req) {
   if (req.body !== undefined && req.body !== null) {
@@ -31,17 +20,25 @@ async function readBody(req) {
 }
 
 export default async function handler(req, res) {
-  if (!URL || !TOKEN) {
-    return res.status(500).json({ error: "Almacenamiento no configurado (faltan variables de entorno de Upstash/KV)" });
-  }
   try {
     if (req.method === "GET") {
-      const { result } = await redis(["GET", KEY]);
-      return res.status(200).json(result ? JSON.parse(result) : {});
+      const { blobs } = await list({ prefix: KEY, limit: 1 });
+      const found = blobs.find((b) => b.pathname === KEY);
+      if (!found) return res.status(200).json({});
+      // cache-buster para leer siempre la versión más reciente
+      const r = await fetch(found.url + "?t=" + new Date().getTime(), { cache: "no-store" });
+      if (!r.ok) return res.status(200).json({});
+      return res.status(200).json(await r.json());
     }
     if (req.method === "POST") {
       const body = await readBody(req);
-      await redis(["SET", KEY, JSON.stringify(body || {})]);
+      await put(KEY, JSON.stringify(body || {}), {
+        access: "public",
+        contentType: "application/json",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        cacheControlMaxAge: 0,
+      });
       return res.status(200).json({ ok: true });
     }
     return res.status(405).json({ error: "Método no permitido" });

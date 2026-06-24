@@ -610,7 +610,7 @@ function saveProgress(){
       if(r.ok){ const j=await r.json(); if(j&&j._v){ lastV=Math.max(lastV,j._v); writeLocal(lastV,sel); } }
     }catch(e){}
     finally{pendingPush=false;}
-  },400);
+  },300);
 }
 // Lee el estado del servidor; solo lo aplica si es MÁS NUEVO que el nuestro (evita que
 // una lectura en caché vieja borre lo que acabamos de seleccionar).
@@ -637,7 +637,9 @@ function restoreProgress(){
   applyState(loc.sel);
   // 2) Estado compartido del servidor + sincronización periódica entre dispositivos
   pullProgress();
-  setInterval(pullProgress,5000);
+  setInterval(pullProgress,3000);
+  // 3) Al volver a la pestaña/dispositivo, refrescar de inmediato
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) pullProgress(); });
 }
 function updateProgress(mi, body){
   const total = DATA.resumen[+mi].total;

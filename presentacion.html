@@ -563,26 +563,68 @@ function go(n){
 document.getElementById('next').onclick=()=>go(cur+1);
 document.getElementById('prev').onclick=()=>go(cur-1);
 const STORE_KEY='sgdea-progreso-v1';
-function saveProgress(){
+const API='/api/progress';
+let lastServer='';      // último estado aplicado (string JSON) para detectar cambios
+let pendingPush=false;  // hay cambios locales sin sincronizar todavía
+let pushTimer=null;
+
+// Recolecta el estado actual de los checkboxes en un objeto { mi: [ri,...] }
+function collectState(){
   const data={};
   document.querySelectorAll('.reqtab.viewed').forEach(t=>{
     const mi=t.dataset.mi; (data[mi]=data[mi]||[]).push(t.dataset.ri);
   });
-  try{localStorage.setItem(STORE_KEY,JSON.stringify(data));}catch(e){}
+  return data;
 }
-function restoreProgress(){
-  let data; try{data=JSON.parse(localStorage.getItem(STORE_KEY)||'{}');}catch(e){data={};}
-  Object.keys(data).forEach(mi=>{
-    (data[mi]||[]).forEach(ri=>{
-      const t=document.querySelector('.reqtab[data-mi="'+mi+'"][data-ri="'+ri+'"]');
-      if(t) t.classList.add('viewed');
-    });
+// Aplica un estado al DOM (marca y desmarca) y refresca todas las barras
+function applyState(data){
+  data=data||{};
+  document.querySelectorAll('.reqtab').forEach(t=>{
+    const arr=data[t.dataset.mi]||[];
+    t.classList.toggle('viewed', arr.indexOf(t.dataset.ri)>=0);
   });
-  // Actualizar todas las barras de cada módulo
   document.querySelectorAll('.mod-body').forEach(body=>{
     const any=body.querySelector('.reqtab'); if(any) updateProgress(any.dataset.mi, body);
   });
   updateGlobalProgress();
+}
+// Guarda: local al instante + envía al servidor (debounce) para que aparezca en otros dispositivos
+function saveProgress(){
+  const json=JSON.stringify(collectState());
+  try{localStorage.setItem(STORE_KEY,json);}catch(e){}
+  pendingPush=true;
+  clearTimeout(pushTimer);
+  pushTimer=setTimeout(async ()=>{
+    try{
+      await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:json});
+      lastServer=json;
+    }catch(e){}
+    finally{pendingPush=false;}
+  },400);
+}
+// Lee el estado del servidor; si cambió (otro dispositivo lo modificó) lo aplica
+async function pullProgress(){
+  if(pendingPush) return; // no pisar cambios locales aún no sincronizados
+  try{
+    const r=await fetch(API,{cache:'no-store'});
+    if(!r.ok) return;
+    const data=await r.json();
+    const json=JSON.stringify(data);
+    if(json!==lastServer){
+      lastServer=json;
+      try{localStorage.setItem(STORE_KEY,json);}catch(e){}
+      applyState(data);
+    }
+  }catch(e){}
+}
+function restoreProgress(){
+  // 1) Estado local al instante (sin esperar red)
+  let data; try{data=JSON.parse(localStorage.getItem(STORE_KEY)||'{}');}catch(e){data={};}
+  applyState(data);
+  lastServer=JSON.stringify(data);
+  // 2) Estado compartido del servidor + sincronización periódica entre dispositivos
+  pullProgress();
+  setInterval(pullProgress,5000);
 }
 function updateProgress(mi, body){
   const total = DATA.resumen[+mi].total;
